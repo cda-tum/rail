@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
+#include <queue>
 #include <stack>
 #include <string>
 #include <tinyxml2.h>
@@ -966,13 +968,17 @@ cda_rail::Network::separate_edge_at(
                                   distances_from_source.front(), edge.max_speed,
                                   new_edge_breakable, edge.min_block_length,
                                   edge.min_stop_block_length));
+  update_new_old_edge(new_edges.back(), edge_index, 0);
   for (size_t i = 1; i < distances_from_source.size(); ++i) {
     new_edges.emplace_back(add_edge(
         new_vertices[i - 1], new_vertices[i],
         distances_from_source[i] - distances_from_source[i - 1], edge.max_speed,
         new_edge_breakable, edge.min_block_length, edge.min_stop_block_length));
+    update_new_old_edge(new_edges.back(), edge_index,
+                        distances_from_source[i - 1]);
   }
   change_edge_length(edge_index, edge.length - distances_from_source.back());
+  update_new_old_edge(edge_index, edge_index, distances_from_source.back());
   if (!new_edge_breakable) {
     set_edge_unbreakable(edge_index);
   }
@@ -1010,14 +1016,19 @@ cda_rail::Network::separate_edge_at(
         edge.length - distances_from_source.back(), reverse_edge.max_speed,
         new_edge_breakable, reverse_edge.min_block_length,
         reverse_edge.min_stop_block_length));
+    update_new_old_edge(new_reverse_edges.back(), reverse_edge_index, 0);
     for (size_t i = distances_from_source.size() - 1; i > 0; --i) {
       new_reverse_edges.emplace_back(add_edge(
           new_vertices[i], new_vertices[i - 1],
           distances_from_source[i] - distances_from_source[i - 1],
           reverse_edge.max_speed, new_edge_breakable,
           reverse_edge.min_block_length, reverse_edge.min_stop_block_length));
+      update_new_old_edge(new_reverse_edges.back(), reverse_edge_index,
+                          reverse_edge.length - distances_from_source[i]);
     }
     change_edge_length(reverse_edge_index, distances_from_source.front());
+    update_new_old_edge(reverse_edge_index, reverse_edge_index,
+                        reverse_edge.length - distances_from_source.front());
     if (!new_edge_breakable) {
       set_edge_unbreakable(reverse_edge_index);
     }
@@ -1650,6 +1661,67 @@ cda_rail::Network::all_edge_pairs_shortest_paths() const {
   return ret_val;
 }
 
+std::optional<double>
+cda_rail::Network::shortest_path(size_t source_edge_id,
+                                 size_t target_vertex_id) const {
+  /**
+   * Calculates the shortest path from a source edge e to a target vertex w.
+   * If e = (u,v), then the length of the shortest path between v and w is
+   * returned. However, only valid successors of e can be used as a first edge.
+   * If no path exists, the optional has no value.
+   */
+
+  if (!has_edge(source_edge_id)) {
+    throw exceptions::EdgeNotExistentException(source_edge_id);
+  }
+  if (!has_vertex(target_vertex_id)) {
+    throw exceptions::VertexNotExistentException(target_vertex_id);
+  }
+
+  // If source edge already leads to the target, then the distance is 0
+  const auto& source_edge = get_edge(source_edge_id);
+  if (source_edge.target == target_vertex_id) {
+    return 0;
+  }
+
+  // Initialize vectors and queues for Dijkstra
+  std::vector<double> distances(number_of_edges(), INF);
+  std::vector<bool>   visited(number_of_edges(), false);
+  // Priority queue where the element with the smallest .first is returned
+  std::priority_queue<std::pair<double, size_t>,
+                      std::vector<std::pair<double, size_t>>, std::greater<>>
+      pq;
+  pq.emplace(0, source_edge_id);
+  distances[source_edge_id] = 0;
+
+  // Dijkstra
+  while (!pq.empty()) {
+    auto [dist, edge_id] = pq.top();
+    pq.pop();
+
+    if (visited[edge_id]) {
+      // Probably relict from later update due to shorter path
+      continue;
+    }
+    visited[edge_id] = true;
+
+    if (const auto& edge = get_edge(edge_id); edge.target == target_vertex_id) {
+      return dist;
+    }
+
+    for (const auto& successor : get_successors(edge_id)) {
+      const auto& successor_edge = get_edge(successor);
+      if (dist + successor_edge.length < distances[successor]) {
+        // Update entry in priority queue
+        distances[successor] = dist + successor_edge.length;
+        pq.emplace(distances[successor], successor);
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
 std::vector<std::pair<size_t, std::vector<size_t>>>
 cda_rail::Network::separate_stop_edges(const std::vector<size_t>& stop_edges) {
   std::vector<std::pair<size_t, std::vector<size_t>>> ret_val;
@@ -1848,4 +1920,69 @@ double cda_rail::Network::minimal_neighboring_edge_length(
         return get_edge(a).length < get_edge(b).length;
       });
   return get_edge(min_edge_index).length;
+}
+
+std::vector<std::pair<size_t, size_t>> cda_rail::Network::get_intersecting_ttd(
+    const std::vector<size_t>&              edges_to_consider,
+    const std::vector<std::vector<size_t>>& ttd) {
+  /**
+   * Returns the intersecting ttd sections, together with the entering, i.e.,
+   * first edge. The edge is returned using the index within the path.
+   */
+
+  std::vector<std::pair<size_t, size_t>> ret_val;
+
+  for (size_t ttd_index = 0; ttd_index < ttd.size(); ++ttd_index) {
+    bool        intersection_found = false;
+    const auto& ttd_section        = ttd.at(ttd_index);
+    for (size_t edge_index = 0;
+         !intersection_found && edge_index < edges_to_consider.size();
+         ++edge_index) {
+      if (std::find(ttd_section.begin(), ttd_section.end(),
+                    edges_to_consider.at(edge_index)) != ttd_section.end()) {
+        ret_val.emplace_back(ttd_index, edge_index);
+        intersection_found = true;
+      }
+    }
+  }
+
+  return ret_val;
+}
+
+std::pair<size_t, double>
+cda_rail::Network::get_old_edge(size_t new_edge) const {
+  if (!has_edge(new_edge)) {
+    throw exceptions::EdgeNotExistentException(new_edge);
+  }
+  // If new_edge_to_old_edge_after_transform has no(!) key new_edge, return
+  // (new_edge, 0)
+  if (new_edge_to_old_edge_after_transform.find(new_edge) ==
+      new_edge_to_old_edge_after_transform.end()) {
+    return {new_edge, 0};
+  }
+  return new_edge_to_old_edge_after_transform.at(new_edge);
+}
+
+void cda_rail::Network::update_new_old_edge(size_t new_edge, size_t old_edge,
+                                            double position) {
+  /**
+   * Updates the mapping accordingly
+   */
+  std::pair<size_t, double> old_edge_position = {old_edge, position};
+  if (new_edge_to_old_edge_after_transform.find(old_edge) !=
+      new_edge_to_old_edge_after_transform.end()) {
+    const auto& old_edge_position_before =
+        new_edge_to_old_edge_after_transform.at(old_edge);
+    old_edge_position = {old_edge_position_before.first,
+                         old_edge_position_before.second + position};
+  }
+  new_edge_to_old_edge_after_transform[new_edge] = old_edge_position;
+}
+
+void cda_rail::Network::change_vertex_headway(size_t index,
+                                              double new_headway) {
+  if (!has_vertex(index)) {
+    throw exceptions::VertexNotExistentException(index);
+  }
+  vertices[index].headway = new_headway;
 }

@@ -24,6 +24,13 @@ struct EdgeTarget {
 
 // NOLINTBEGIN(clang-diagnostic-unused-result,clang-analyzer-deadcode.DeadStores)
 
+TEST(Functionality, NetworkTTDIntersection) {
+  std::vector<std::pair<size_t, size_t>> expected({{0, 1}, {2, 4}});
+  const auto actual = cda_rail::Network::get_intersecting_ttd(
+      {0, 1, 2, 3, 4}, {{1, 2, 5}, {6, 9, 10}, {11, 4, 10}});
+  EXPECT_EQ(actual, expected);
+}
+
 TEST(Functionality, NetworkFunctions) {
   cda_rail::Network network;
   const auto v0 = network.add_vertex("v0", cda_rail::VertexType::NoBorder);
@@ -39,6 +46,42 @@ TEST(Functionality, NetworkFunctions) {
                         network.get_edge_index("v1", "v2"));
   network.add_successor(network.get_edge_index("v2", "v0"),
                         network.get_edge_index("v0", "v1"));
+
+  // Check edge name
+  EXPECT_EQ(network.get_edge_name(e0), "v0-v1");
+  EXPECT_EQ(network.get_edge_name(e1), "v1-v2");
+  EXPECT_EQ(network.get_edge_name(e2), "v1-v0");
+  EXPECT_EQ(network.get_edge_name(e3), "v2-v0");
+
+  EXPECT_EQ(network.get_edge_name(v0, v2), "v0-v2");
+  EXPECT_EQ(network.get_edge_name(v0, v2, false), "v0-v2");
+  EXPECT_THROW(network.get_edge_name(v0, v2, true),
+               cda_rail::exceptions::EdgeNotExistentException);
+  EXPECT_THROW(network.get_edge_name(v0, v0 + v1 + v2),
+               cda_rail::exceptions::VertexNotExistentException);
+  EXPECT_THROW(network.get_edge_name(v0, v0 + v1 + v2, false),
+               cda_rail::exceptions::VertexNotExistentException);
+  EXPECT_THROW(network.get_edge_name(v0, v0 + v1 + v2, true),
+               cda_rail::exceptions::VertexNotExistentException);
+  EXPECT_EQ(network.get_edge_name(v0, v1), "v0-v1");
+  EXPECT_EQ(network.get_edge_name(v0, v1, false), "v0-v1");
+  EXPECT_EQ(network.get_edge_name(v0, v1, true), "v0-v1");
+
+  EXPECT_EQ(network.get_edge_name("v0", "v2"), "v0-v2");
+  EXPECT_EQ(network.get_edge_name("v0", "v2", false), "v0-v2");
+  EXPECT_THROW(network.get_edge_name("v0", "v2", true),
+               cda_rail::exceptions::EdgeNotExistentException);
+  EXPECT_EQ(network.get_edge_name("v0", "temp"), "v0-temp");
+  EXPECT_EQ(network.get_edge_name("v0", "temp", false), "v0-temp");
+  EXPECT_THROW(network.get_edge_name("v0", "temp", true),
+               cda_rail::exceptions::VertexNotExistentException);
+  EXPECT_EQ(network.get_edge_name("temp", "v0"), "temp-v0");
+  EXPECT_EQ(network.get_edge_name("temp", "v0", false), "temp-v0");
+  EXPECT_THROW(network.get_edge_name("temp", "v0", true),
+               cda_rail::exceptions::VertexNotExistentException);
+  EXPECT_EQ(network.get_edge_name("v0", "v1"), "v0-v1");
+  EXPECT_EQ(network.get_edge_name("v0", "v1", false), "v0-v1");
+  EXPECT_EQ(network.get_edge_name("v0", "v1", true), "v0-v1");
 
   // Check vertices used by edges
   const auto vertices1 = network.vertices_used_by_edges({e0, e1, e2});
@@ -1269,9 +1312,9 @@ TEST(Functionality, WriteNetwork) {
 TEST(Functionality, NetworkEdgeSeparation) {
   cda_rail::Network network;
   // Add vertices
-  network.add_vertex("v00", cda_rail::VertexType::TTD);
+  const auto v00 = network.add_vertex("v00", cda_rail::VertexType::TTD);
   network.add_vertex("v01", cda_rail::VertexType::TTD);
-  network.add_vertex("v1", cda_rail::VertexType::TTD);
+  const auto v1 = network.add_vertex("v1", cda_rail::VertexType::TTD);
   network.add_vertex("v2", cda_rail::VertexType::TTD);
   network.add_vertex("v30", cda_rail::VertexType::TTD);
   network.add_vertex("v31", cda_rail::VertexType::TTD);
@@ -1523,6 +1566,20 @@ TEST(Functionality, NetworkEdgeSeparation) {
   EXPECT_TRUE(network.get_successors("v2", "v30").empty());
   // v2->v31 has no successors
   EXPECT_TRUE(network.get_successors("v2", "v31").empty());
+
+  // Check the mapping
+  // Reminder v1 ->(len: 11) v1_v2_0 -> (len: 11) v1_v2_1 -> (len: 11) v1_v2_2
+  // -> (len:11) v2
+  std::pair<size_t, double> expected_pair = {v00_v1, 0};
+  EXPECT_EQ(network.get_old_edge(v00, v1), expected_pair);
+  expected_pair = {v1_v2, 0};
+  EXPECT_EQ(network.get_old_edge("v1", "v1_v2_0"), expected_pair);
+  expected_pair = {v1_v2, 11};
+  EXPECT_EQ(network.get_old_edge("v1_v2_0", "v1_v2_1"), expected_pair);
+  expected_pair = {v1_v2, 22};
+  EXPECT_EQ(network.get_old_edge("v1_v2_1", "v1_v2_2"), expected_pair);
+  expected_pair = {v1_v2, 33};
+  EXPECT_EQ(network.get_old_edge("v1_v2_2", "v2"), expected_pair);
 }
 
 TEST(Functionality, NetworkExceptions) {
@@ -2109,6 +2166,26 @@ TEST(Functionality, NetworkEdgeSeparationReverse) {
   // Successors of v1->v00 and v1->v01 are empty
   EXPECT_TRUE(network.get_successors("v1", "v00").empty());
   EXPECT_TRUE(network.get_successors("v1", "v01").empty());
+
+  // Check mapping
+  // Reminder: v1 ->(len: 11) v1_v2_0 -> (len: 11) v1_v2_1 -> (len: 11) v1_v2_2
+  // -> (len:11) v2
+  std::pair<size_t, double> expected_pair = {v1_v2, 0};
+  EXPECT_EQ(network.get_old_edge("v1", "v1_v2_0"), expected_pair);
+  expected_pair = {v1_v2, 11};
+  EXPECT_EQ(network.get_old_edge("v1_v2_0", "v1_v2_1"), expected_pair);
+  expected_pair = {v1_v2, 22};
+  EXPECT_EQ(network.get_old_edge("v1_v2_1", "v1_v2_2"), expected_pair);
+  expected_pair = {v1_v2, 33};
+  EXPECT_EQ(network.get_old_edge("v1_v2_2", "v2"), expected_pair);
+  expected_pair = {v2_v1, 0};
+  EXPECT_EQ(network.get_old_edge("v2", "v1_v2_2"), expected_pair);
+  expected_pair = {v2_v1, 11};
+  EXPECT_EQ(network.get_old_edge("v1_v2_2", "v1_v2_1"), expected_pair);
+  expected_pair = {v2_v1, 22};
+  EXPECT_EQ(network.get_old_edge("v1_v2_1", "v1_v2_0"), expected_pair);
+  expected_pair = {v2_v1, 33};
+  EXPECT_EQ(network.get_old_edge("v1_v2_0", "v1"), expected_pair);
 }
 
 TEST(Functionality, NetworkVerticesByType) {
@@ -2283,17 +2360,17 @@ TEST(Functionality, InverseEdges) {
   EXPECT_TRUE(std::find(inv_2.begin(), inv_2.end(), e34) != inv_2.end());
 }
 
-TEST(Functionality, FloydWarshall) {
+TEST(Functionality, ShortestPaths) {
   // Initialize empty network
   cda_rail::Network network;
 
   // Add 6 vertices
-  network.add_vertex("v1", cda_rail::VertexType::TTD);
-  network.add_vertex("v2", cda_rail::VertexType::TTD);
-  network.add_vertex("v3", cda_rail::VertexType::TTD);
-  network.add_vertex("v4", cda_rail::VertexType::TTD);
-  network.add_vertex("v5", cda_rail::VertexType::TTD);
-  network.add_vertex("v6", cda_rail::VertexType::TTD);
+  const auto v1 = network.add_vertex("v1", cda_rail::VertexType::TTD);
+  const auto v2 = network.add_vertex("v2", cda_rail::VertexType::TTD);
+  const auto v3 = network.add_vertex("v3", cda_rail::VertexType::TTD);
+  const auto v4 = network.add_vertex("v4", cda_rail::VertexType::TTD);
+  const auto v5 = network.add_vertex("v5", cda_rail::VertexType::TTD);
+  const auto v6 = network.add_vertex("v6", cda_rail::VertexType::TTD);
 
   // Add the following edges
   // v1 v2 of length 100
@@ -2352,6 +2429,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v1_v2][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v1_v2][v6_v5], cda_rail::INF);
 
+  EXPECT_EQ(network.shortest_path(v1_v2, v2), 0);
+  EXPECT_EQ(network.shortest_path(v1_v2, v3), 200);
+  EXPECT_EQ(network.shortest_path(v1_v2, v4), 500);
+  EXPECT_EQ(network.shortest_path(v1_v2, v5), 700);
+  EXPECT_EQ(network.shortest_path(v1_v2, v6), 1700);
+  EXPECT_EQ(network.shortest_path(v1_v2, v1), 1000);
+
   // Starting from v2_v3, we reach
   // v2_v3 in 0
   // v3_v4 in 300
@@ -2372,6 +2456,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v2_v3][v4_v3], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v2_v3][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v2_v3][v6_v5], cda_rail::INF);
+
+  EXPECT_EQ(network.shortest_path(v2_v3, v1), 800);
+  EXPECT_EQ(network.shortest_path(v2_v3, v2), 900);
+  EXPECT_EQ(network.shortest_path(v2_v3, v3), 0);
+  EXPECT_EQ(network.shortest_path(v2_v3, v4), 300);
+  EXPECT_EQ(network.shortest_path(v2_v3, v5), 500);
+  EXPECT_EQ(network.shortest_path(v2_v3, v6), 1500);
 
   // Starting from v3_v4, we reach
   // v3_v4 in 0
@@ -2394,6 +2485,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v3_v4][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v3_v4][v6_v5], cda_rail::INF);
 
+  EXPECT_EQ(network.shortest_path(v3_v4, v1), 500);
+  EXPECT_EQ(network.shortest_path(v3_v4, v2), 600);
+  EXPECT_EQ(network.shortest_path(v3_v4, v3), 800);
+  EXPECT_EQ(network.shortest_path(v3_v4, v4), 0);
+  EXPECT_EQ(network.shortest_path(v3_v4, v5), 400);
+  EXPECT_EQ(network.shortest_path(v3_v4, v6), 1400);
+
   // Starting from v3_v5, we reach
   // v3_v5 in 0
   // v5_v6 in 1000
@@ -2409,6 +2507,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v3_v5][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v3_v5][v6_v5], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v3_v5][v3_v2], cda_rail::INF);
+
+  EXPECT_FALSE(network.shortest_path(v3_v5, v1).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v5, v2).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v5, v3).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v5, v4).has_value());
+  EXPECT_EQ(network.shortest_path(v3_v5, v5), 0);
+  EXPECT_EQ(network.shortest_path(v3_v5, v6), 1000);
 
   // Starting from v4_v5, we reach
   // v4_v5 in 0
@@ -2426,6 +2531,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v4_v5][v6_v5], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v4_v5][v3_v2], cda_rail::INF);
 
+  EXPECT_FALSE(network.shortest_path(v4_v5, v1).has_value());
+  EXPECT_FALSE(network.shortest_path(v4_v5, v2).has_value());
+  EXPECT_FALSE(network.shortest_path(v4_v5, v3).has_value());
+  EXPECT_FALSE(network.shortest_path(v4_v5, v4).has_value());
+  EXPECT_EQ(network.shortest_path(v4_v5, v5), 0);
+  EXPECT_EQ(network.shortest_path(v4_v5, v6), 1000);
+
   // Starting from v5_v6, we reach
   // v5_v6 in 0
   // all other edges are not reachable
@@ -2440,6 +2552,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v5_v6][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v5_v6][v6_v5], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v5_v6][v3_v2], cda_rail::INF);
+
+  EXPECT_FALSE(network.shortest_path(v5_v6, v1).has_value());
+  EXPECT_FALSE(network.shortest_path(v5_v6, v2).has_value());
+  EXPECT_FALSE(network.shortest_path(v5_v6, v3).has_value());
+  EXPECT_FALSE(network.shortest_path(v5_v6, v4).has_value());
+  EXPECT_FALSE(network.shortest_path(v5_v6, v5).has_value());
+  EXPECT_EQ(network.shortest_path(v5_v6, v6), 0);
 
   // Starting from v4_v1, we reach
   // v4_v1 in 0
@@ -2462,6 +2581,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v4_v1][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v4_v1][v6_v5], cda_rail::INF);
 
+  EXPECT_EQ(network.shortest_path(v4_v1, v1), 0);
+  EXPECT_EQ(network.shortest_path(v4_v1, v2), 100);
+  EXPECT_EQ(network.shortest_path(v4_v1, v3), 300);
+  EXPECT_EQ(network.shortest_path(v4_v1, v4), 600);
+  EXPECT_EQ(network.shortest_path(v4_v1, v5), 800);
+  EXPECT_EQ(network.shortest_path(v4_v1, v6), 1800);
+
   // Starting from v6_v5, we reach
   // v6_v5 in 0
   // v5_v4 in 400
@@ -2480,6 +2606,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v6_v5][v2_v3], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v6_v5][v5_v6], cda_rail::INF);
 
+  EXPECT_FALSE(network.shortest_path(v6_v5, v1).has_value());
+  EXPECT_EQ(network.shortest_path(v6_v5, v2), 900);
+  EXPECT_EQ(network.shortest_path(v6_v5, v3), 700);
+  EXPECT_EQ(network.shortest_path(v6_v5, v4), 400);
+  EXPECT_EQ(network.shortest_path(v6_v5, v5), 0);
+  EXPECT_FALSE(network.shortest_path(v6_v5, v6).has_value());
+
   // Starting from v5_v4, we reach
   // v5_v4 in 0
   // v4_v3 in 300
@@ -2497,6 +2630,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v5_v4][v5_v6], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v5_v4][v6_v5], cda_rail::INF);
 
+  EXPECT_FALSE(network.shortest_path(v5_v4, v1).has_value());
+  EXPECT_EQ(network.shortest_path(v5_v4, v2), 500);
+  EXPECT_EQ(network.shortest_path(v5_v4, v3), 300);
+  EXPECT_EQ(network.shortest_path(v5_v4, v4), 0);
+  EXPECT_FALSE(network.shortest_path(v5_v4, v5).has_value());
+  EXPECT_FALSE(network.shortest_path(v5_v4, v6).has_value());
+
   // Starting from v4_v3, we reach
   // v4_v3 in 0
   // v3_v2 in 200
@@ -2513,6 +2653,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v4_v3][v5_v6], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v4_v3][v6_v5], cda_rail::INF);
 
+  EXPECT_FALSE(network.shortest_path(v4_v3, v1).has_value());
+  EXPECT_EQ(network.shortest_path(v4_v3, v2), 200);
+  EXPECT_EQ(network.shortest_path(v4_v3, v3), 0);
+  EXPECT_FALSE(network.shortest_path(v4_v3, v4).has_value());
+  EXPECT_FALSE(network.shortest_path(v4_v3, v5).has_value());
+  EXPECT_FALSE(network.shortest_path(v4_v3, v6).has_value());
+
   // Starting from v3_v2, we reach
   // v3_v2 in 0
   // all other edges are not reachable
@@ -2527,6 +2674,13 @@ TEST(Functionality, FloydWarshall) {
   EXPECT_EQ(shortest_paths[v3_v2][v5_v4], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v3_v2][v5_v6], cda_rail::INF);
   EXPECT_EQ(shortest_paths[v3_v2][v6_v5], cda_rail::INF);
+
+  EXPECT_FALSE(network.shortest_path(v3_v2, v1).has_value());
+  EXPECT_EQ(network.shortest_path(v3_v2, v2), 0);
+  EXPECT_FALSE(network.shortest_path(v3_v2, v3).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v2, v4).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v2, v5).has_value());
+  EXPECT_FALSE(network.shortest_path(v3_v2, v6).has_value());
 }
 
 TEST(Functionality, ReadTrains) {
